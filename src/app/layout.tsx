@@ -15,7 +15,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body className="min-h-screen bg-[color:var(--bg-start)] text-slate-100 antialiased">
         <div className="max-w-7xl mx-auto px-4 py-6">
           <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
-            <h1 className="h1">NBA Scores & Odds</h1>
+            <h1 className="h1">SportsScores & Insights</h1>
             <nav className="flex flex-wrap gap-2">
               <Link className="btn" href="/">Home</Link>
               <Link className="btn" href="/">Scores</Link>
