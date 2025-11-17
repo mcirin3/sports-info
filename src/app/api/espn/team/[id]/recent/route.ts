@@ -1,4 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
+import { nbaTeamIdToEspnId } from "@/lib/teamMap";
+
+type ESPNScoreValue =
+  | number
+  | string
+  | { value?: number | string; displayValue?: number | string };
+
+type ESPNCompetitor = {
+  team?: { id?: number | string; displayName?: string; name?: string; logo?: string; logos?: { href?: string }[] };
+  score?: ESPNScoreValue;
+  homeAway?: string;
+  winner?: boolean;
+};
+
+type ESPNCompetitionStatus = {
+  completed?: boolean;
+  state?: string;
+  description?: string;
+  detail?: string;
+};
+
+type ESPNCompetition = {
+  competitors?: ESPNCompetitor[];
+  status?: { type?: ESPNCompetitionStatus };
+};
+
+type ESPNEvent = {
+  id?: string | number;
+  date?: string;
+  competitions?: ESPNCompetition[];
+  status?: { type?: ESPNCompetitionStatus };
+};
+
+type ESPNTeamScheduleResponse = {
+  events?: ESPNEvent[];
+};
 
 export const dynamic = "force-dynamic";
 
@@ -8,39 +44,78 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const { searchParams } = new URL(req.url);
-  const id = params.id;
-  const season = searchParams.get("season") ?? String(new Date().getFullYear());
+  const { id: rawId } = await params;
+  const id = normalizeEspnTeamId(rawId);
+  const requestedSeason = searchParams.get("season");
   const seasontype = searchParams.get("seasontype") ?? "2";
   const limit = Number(searchParams.get("limit") ?? "5");
 
-  const url =
-    `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${id}/schedule?` +
-    new URLSearchParams({ season, seasontype }).toString();
+  const currentLabel = seasonLabelForEspn();
+  const primarySeason = resolveSeason(requestedSeason, currentLabel);
+  const fallbackSeason =
+    primarySeason > currentLabel
+      ? currentLabel
+      : Math.max(primarySeason - 1, 2000);
 
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    return NextResponse.json({ error: `ESPN ${res.status}: ${text}` }, { status: 502 });
+  const seasonsToTry = Array.from(
+    new Set(
+      [primarySeason, fallbackSeason].filter(
+        (season) => Number.isFinite(season) && season > 0
+      )
+    )
+  );
+
+  let activeSeason = primarySeason;
+  let payload: ESPNTeamScheduleResponse | null = null;
+  let lastStatus = 0;
+  let lastErrorText = "";
+
+  for (const season of seasonsToTry) {
+    const url =
+      `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${id}/schedule?` +
+      new URLSearchParams({ season: String(season), seasontype }).toString();
+
+    const res = await fetch(url, { cache: "no-store" });
+    lastStatus = res.status;
+    if (res.ok) {
+      payload = await res.json();
+      activeSeason = season;
+      break;
+    }
+    lastErrorText = await res.text().catch(() => "");
   }
-  const json = await res.json();
+
+  if (!payload) {
+    const suffix = lastErrorText ? `${lastStatus}: ${lastErrorText}` : "fetch failed";
+    return NextResponse.json(
+      { error: `ESPN ${suffix}` },
+      { status: 502 }
+    );
+  }
 
   // ESPN gives "events" with competitions; take finished games only, newest last.
-  const events: any[] = Array.isArray(json?.events) ? json.events : [];
+  const events: ESPNEvent[] = Array.isArray(payload?.events)
+    ? (payload.events as ESPNEvent[])
+    : [];
   const finals = events
-    .filter(e => (e?.status?.type?.completed ?? false) || /final/i.test(e?.status?.type?.description ?? ""))
+    .filter((event) => isCompletedEvent(event))
     .slice(-limit);
 
-  const games = finals.map(ev => {
-    const comp = ev?.competitions?.[0] ?? {};
-    const comps = Array.isArray(comp?.competitors) ? comp.competitors : [];
-    const me = comps.find((c: any) => String(c?.team?.id) === String(id)) ?? comps[0] ?? {};
-    const opp = comps.find((c: any) => String(c?.team?.id) !== String(id)) ?? comps[1] ?? {};
+  const games = finals.map((ev) => {
+    const comp = ev?.competitions?.[0];
+    const comps = Array.isArray(comp?.competitors)
+      ? (comp?.competitors as ESPNCompetitor[])
+      : [];
+    const me =
+      comps.find((c) => String(c?.team?.id) === String(id)) ?? comps[0];
+    const opp =
+      comps.find((c) => String(c?.team?.id) !== String(id)) ?? comps[1];
 
-    const pf = Number(me?.score ?? 0);
-    const pa = Number(opp?.score ?? 0);
+    const pf = extractScore(me);
+    const pa = extractScore(opp);
     const won = Boolean(me?.winner);
 
     return {
@@ -52,7 +127,9 @@ export async function GET(
         name: opp?.team?.displayName ?? opp?.team?.name,
         logo: opp?.team?.logo ?? opp?.team?.logos?.[0]?.href,
       },
-      pf, pa, won,
+      pf,
+      pa,
+      won,
     };
   });
 
@@ -69,7 +146,7 @@ export async function GET(
   const n = games.length || 1;
   return NextResponse.json({
     teamId: Number(id),
-    season: Number(season),
+    season: Number(activeSeason),
     seasontype: Number(seasontype),
     sample: games.length,
     pfAvg: +(totals.pf / n).toFixed(1),
@@ -77,4 +154,60 @@ export async function GET(
     recordLastN: `${totals.w}-${n - totals.w}`,
     games,
   });
+}
+
+function normalizeEspnTeamId(id: string) {
+  const asNumber = Number(id);
+  if (!Number.isFinite(asNumber)) return Number(id);
+  return nbaTeamIdToEspnId[asNumber] ?? asNumber;
+}
+
+function seasonLabelForEspn(now = new Date()) {
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0..11
+  return month >= 8 ? year + 1 : year;
+}
+
+function resolveSeason(seasonParam: string | null, currentLabel: number) {
+  const parsed = Number(seasonParam);
+  if (!Number.isFinite(parsed)) return currentLabel;
+  if (parsed > currentLabel) return currentLabel;
+  return parsed;
+}
+
+function extractScore(comp: ESPNCompetitor | undefined) {
+  if (!comp) return 0;
+  const raw = comp.score;
+  if (raw == null) return 0;
+  if (typeof raw === "number") return raw;
+  if (typeof raw === "string") {
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : 0;
+  }
+  if (typeof raw === "object") {
+    const value = raw.value ?? raw.displayValue;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : 0;
+  }
+  return 0;
+}
+
+function isCompletedEvent(event: ESPNEvent) {
+  const compStatus = event?.competitions?.[0]?.status?.type;
+  const eventStatus = event?.status?.type;
+  if (
+    compStatus?.completed ||
+    compStatus?.state === "post" ||
+    eventStatus?.completed ||
+    eventStatus?.state === "post"
+  ) {
+    return true;
+  }
+  const desc =
+    compStatus?.description ||
+    eventStatus?.description ||
+    compStatus?.detail ||
+    eventStatus?.detail ||
+    "";
+  return /final/i.test(String(desc));
 }

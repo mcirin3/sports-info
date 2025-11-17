@@ -6,11 +6,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const sport = searchParams.get("sport") || "nba";
-  const team = searchParams.get("team");
-
-  if (!team) {
-    return NextResponse.json({ error: "Missing team name" }, { status: 400 });
-  }
+  const team = searchParams.get("team") ?? "";
 
   const url = buildWatchUrl({
     base: process.env.WATCH_BASE_URL || "",

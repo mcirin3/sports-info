@@ -4,7 +4,8 @@ import { use } from "react";
 import useSWR from "swr";
 import { useSearchParams } from "next/navigation";
 import MatchupCard from "@/components/MatchupCard";
-import WatchHere from "@/components/WatchHere";
+import WatchHere from "@/components/WatchHere";  
+import GameIntelPanel from "@/components/GameIntelPanel";
 
 const fetcher = (u: string) => fetch(u).then((r) => r.json());
 const TZ = "America/Chicago";
@@ -54,7 +55,8 @@ export default function GamePage({ params }: { params: Promise<{ id: string }> }
         />
 
 
-        <MatchupCard homeId={homeId} awayId={awayId} />
+        <MatchupCard homeId={homeId} awayId={awayId} />  
+        <GameIntelPanel gameId={gameId} homeId={homeId} awayId={awayId} />
       </div>
 
       <aside className="space-y-4">

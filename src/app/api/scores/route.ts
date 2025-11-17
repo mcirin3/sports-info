@@ -1,16 +1,16 @@
-// app(api)/scores/route.ts — ESPN scoreboard adapter
+// app/api/scores/route.ts — NBA live scoreboard adapter
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
 type TeamLite = { id: number; name: string; code?: string; logo?: string };
 type GameLite = {
-  id: number;
-  date: string;
+  id: string;                 // NBA gameId (string)
+  date: string;               // tip time UTC
   season: number;
-  status: string;           // "NS" | "Q1".."Q4" | "OT" | "FT"
-  period?: number;          // NEW: 1..4, 5+ (OT), undefined when not live
-  clock?: string;           // NEW: "5:32" etc., empty when not live
+  status: string;             // "NS" | "Q1".."Q4" | "OT" | "FT"
+  period?: number;
+  clock?: string;
   home: { team: TeamLite; score: number };
   away: { team: TeamLite; score: number };
 };
@@ -18,114 +18,100 @@ type GameLite = {
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-
-    // Accept ?date=YYYY-MM-DD (optional) and ?tz=America/Chicago (optional)
-    // ESPN schedules are keyed to US TV (ET) — default to New York
-    const tz = searchParams.get("tz") || "America/New_York";
-    const dateISO = searchParams.get("date") || formatYMDinTZ(new Date(), tz);
-    const espnDate = dateISO.replace(/-/g, ""); // YYYYMMDD
     const liveOnly = searchParams.get("live") === "all";
 
-    // ESPN scoreboard (undocumented). limit is harmless if ignored.
-    const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=${espnDate}&limit=300`;
-    const res = await fetch(url, { next: { revalidate: 10 }, cache: "no-store" });
+    // NBA live scoreboard for *today*
+    const url =
+      "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json";
+
+    const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      return NextResponse.json({ error: `ESPN ${res.status}: ${text}` }, { status: 502 });
+      return NextResponse.json(
+        { error: `NBA ${res.status}: ${text}` },
+        { status: 502 }
+      );
     }
+
     const json = await res.json();
+    const gamesRaw: any[] = json?.scoreboard?.games ?? [];
 
-    // Collect events from all shapes ESPN sometimes uses
-    const rootEvents: any[] = Array.isArray(json?.events) ? json.events : [];
-    const leaguesEvents: any[] = Array.isArray(json?.leagues?.[0]?.events) ? json.leagues[0].events : [];
-    const sportsEvents: any[] = Array.isArray(json?.sports)
-      ? json.sports.flatMap((s: any) =>
-          Array.isArray(s?.leagues)
-            ? s.leagues.flatMap((l: any) => (Array.isArray(l?.events) ? l.events : []))
-            : []
-        )
-      : [];
-
-    const byId = new Map<string, any>();
-    for (const ev of [...rootEvents, ...leaguesEvents, ...sportsEvents]) {
-      const id = String(ev?.id ?? "");
-      if (id && !byId.has(id)) byId.set(id, ev);
-    }
-    let games: GameLite[] = Array.from(byId.values()).map(mapEspnEventToGame);
+    let games: GameLite[] = gamesRaw.map(mapNbaGameToGameLite);
 
     if (liveOnly) {
-      const isLive = (g: GameLite) => ["Q1", "Q2", "Q3", "Q4", "OT"].includes(g.status);
+      const isLive = (g: GameLite) =>
+        ["Q1", "Q2", "Q3", "Q4", "OT"].includes(g.status);
       const live = games.filter(isLive);
-      // optional UX fallback: if ESPN hasn't flipped state yet, show full slate
       games = live.length ? live : games;
     }
 
     return NextResponse.json({ data: games });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "scores fetch failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: e?.message ?? "scores fetch failed" },
+      { status: 500 }
+    );
   }
 }
 
 /* ----------------- helpers ----------------- */
 
-// "YYYY-MM-DD" in a specific IANA timezone
-function formatYMDinTZ(d: Date, tz: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(d);
-  const y = parts.find((p) => p.type === "year")!.value;
-  const m = parts.find((p) => p.type === "month")!.value;
-  const da = parts.find((p) => p.type === "day")!.value;
-  return `${y}-${m}-${da}`;
-}
+function mapNbaGameToGameLite(g: any): GameLite {
+  const gameId: string = g.gameId;
+  const season: number = Number(g.season ?? new Date().getFullYear());
+  const startTimeUTC: string = g.gameTimeUTC ?? new Date().toISOString();
 
-function mapEspnEventToGame(ev: any): GameLite {
-  const comp = ev?.competitions?.[0] ?? {};
-  const comps = Array.isArray(comp?.competitors) ? comp.competitors : [];
+  const homeRaw = g.homeTeam ?? {};
+  const awayRaw = g.awayTeam ?? {};
 
-  const home = comps.find((c: any) => c?.homeAway === "home") ?? comps[0] ?? {};
-  const away = comps.find((c: any) => c?.homeAway === "away") ?? comps[1] ?? {};
-
-  const hs = Number(home?.score ?? 0);
-  const as = Number(away?.score ?? 0);
-
-  const hTeam: TeamLite = {
-    id: Number(home?.team?.id ?? 0),
-    name: home?.team?.displayName ?? home?.team?.name ?? "Home",
-    code: home?.team?.abbreviation ?? undefined,
-    logo: home?.team?.logo ?? home?.team?.logos?.[0]?.href ?? undefined,
-  };
-  const aTeam: TeamLite = {
-    id: Number(away?.team?.id ?? 0),
-    name: away?.team?.displayName ?? away?.team?.name ?? "Away",
-    code: away?.team?.abbreviation ?? undefined,
-    logo: away?.team?.logo ?? away?.team?.logos?.[0]?.href ?? undefined,
+  const homeTeam: TeamLite = {
+    id: Number(homeRaw.teamId),
+    name: homeRaw.teamName,
+    code: homeRaw.teamTricode,
+    logo: `https://cdn.nba.com/logos/nba/${homeRaw.teamId}/global/L/logo.svg`,
   };
 
-  const s = comp?.status ?? ev?.status ?? {};
-  const period = Number(s?.period ?? 0);
-  const state = String(s?.type?.state ?? "").toLowerCase(); // "pre" | "in" | "post"
-  const shortDetail: string = s?.type?.shortDetail ?? "";
-  const clock: string = String(s?.displayClock ?? "");       // "5:32" etc.
+  const awayTeam: TeamLite = {
+    id: Number(awayRaw.teamId),
+    name: awayRaw.teamName,
+    code: awayRaw.teamTricode,
+    logo: `https://cdn.nba.com/logos/nba/${awayRaw.teamId}/global/L/logo.svg`,
+  };
 
-  const status =
-    state === "pre" ? "NS" :
-    state === "in"  ? (period >= 1 && period <= 4 ? `Q${period}` : "OT") :
-    /final/i.test(shortDetail) ? "FT" : "NS";
+  const homeScore = Number(homeRaw.score ?? 0);
+  const awayScore = Number(awayRaw.score ?? 0);
 
-  const seasonYear = Number(ev?.season?.year) || new Date(ev?.date ?? Date.now()).getFullYear();
+  const gameStatus: number = Number(g.gameStatus ?? 1); // 1 = scheduled, 2 = live, 3 = final
+  const period: number = Number(g.period ?? 0);
+  const clock: string = String(g.gameClock ?? "");
+  const statusText: string = String(g.gameStatusText ?? "");
+
+  let status: string;
+
+  if (gameStatus === 1) {
+    status = "NS"; // Not Started
+  } else if (gameStatus === 2) {
+    // Live
+    if (period >= 1 && period <= 4) {
+      status = `Q${period}`;
+    } else {
+      status = "OT";
+    }
+  } else if (gameStatus === 3) {
+    status = "FT"; // Final
+  } else {
+    // fallback: infer from text
+    status = /final/i.test(statusText) ? "FT" : "NS";
+  }
 
   return {
-    id: Number(ev?.id ?? Date.now()),
-    date: ev?.date ?? new Date().toISOString(),
-    season: seasonYear,
+    id: gameId,
+    date: startTimeUTC,
+    season,
     status,
-    period: state === "in" ? period : undefined,
-    clock: state === "in" ? clock : "",
-    home: { team: hTeam, score: hs },
-    away: { team: aTeam, score: as },
+    period: gameStatus === 2 ? period : undefined,
+    clock: gameStatus === 2 ? clock : "",
+    home: { team: homeTeam, score: homeScore },
+    away: { team: awayTeam, score: awayScore },
   };
 }

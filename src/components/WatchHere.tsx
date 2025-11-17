@@ -13,7 +13,8 @@ export default function WatchHere({
   team: string;
   live?: boolean;
 }) {
-  const qs = new URLSearchParams({ sport, team }).toString();
+  const teamName = (team ?? "").trim();
+  const qs = new URLSearchParams({ sport, team: teamName }).toString();
   const { data, error, isLoading } = useSWR<{ url?: string; error?: string }>(
     `/api/watch?${qs}`,
     fetcher,
