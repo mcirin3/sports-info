@@ -2,50 +2,114 @@
 @tailwind components;
 @tailwind utilities;
 
-
 :root {
-  --bg-start: #0f172a; /* slate-900 */
-  --bg-mid: #111827ee; /* gray-900 w/ alpha */
-  --bg-end: #1f2937; /* gray-800 */
+  --bg-base: #030712;
+  --bg-muted: #050a1b;
+  --bg-glow: rgba(14, 165, 233, 0.25);
+  --card-start: rgba(15, 23, 42, 0.9);
+  --card-end: rgba(39, 39, 42, 0.45);
+  --border-color: rgba(226, 232, 240, 0.15);
+  --text-subtle: rgba(226, 232, 240, 0.7);
+  --pill: rgba(255, 255, 255, 0.08);
+  --font-sans: "Space Grotesk", "Inter", "Segoe UI", system-ui, -apple-system,
+    BlinkMacSystemFont, sans-serif;
 }
 
-html,
-body,
-#__next {
-  height: 100%;
-}
+@layer base {
+  html,
+  body {
+    font-family: var(--font-sans);
+    min-height: 100%;
+  }
 
-body {
-  color: #f8fafc; /* text-slate-100 */
-  background-image: linear-gradient(
-    to bottom right,
-    var(--bg-start),
-    var(--bg-mid),
-    var(--bg-end)
-  );
-  background-attachment: fixed;
+  body {
+    color: #f8fafc;
+    background: radial-gradient(
+        circle at top,
+        rgba(79, 70, 229, 0.25),
+        transparent 55%
+      ),
+      radial-gradient(
+        circle at 15% 20%,
+        rgba(14, 165, 233, 0.3),
+        transparent 45%
+      ),
+      linear-gradient(130deg, #020617, #030712 35%, #0f172a 100%);
+    background-attachment: fixed;
+  }
+
+  body::before,
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  body::before {
+    background-image: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 100L100 0' stroke='rgba(255,255,255,0.02)'/%3E%3C/svg%3E");
+    opacity: 0.4;
+  }
+
+  body::after {
+    background: radial-gradient(
+      circle at 80% 10%,
+      rgba(249, 115, 22, 0.25),
+      transparent 40%
+    );
+  }
 }
 
 .card {
-  @apply rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-4 shadow-lg;
+  @apply relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-b from-[color:var(--card-start)] to-[color:var(--card-end)] p-6 shadow-[0_20px_45px_rgba(15,23,42,0.4)] backdrop-blur;
+}
+
+.card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  pointer-events: none;
 }
 
 .btn {
-  @apply inline-flex items-center justify-center rounded-xl px-4 py-2 font-medium border border-white/10 bg-white/10 hover:bg-white/20 transition;
+  @apply inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:border-white/30 hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400;
+}
+
+.btn-primary {
+  @apply border-transparent bg-gradient-to-r from-indigo-500 via-sky-500 to-teal-400 shadow-[0_10px_30px_rgba(59,130,246,0.35)] hover:from-indigo-400 hover:via-sky-400 hover:to-teal-300;
+}
+
+.btn-ghost {
+  @apply border-white/10 bg-white/5 hover:bg-white/10;
 }
 
 .badge {
-  @apply text-xs px-2 py-0.5 rounded-full bg-white/10 border border-white/10;
+  @apply inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[0.7rem] uppercase tracking-wide text-[color:var(--text-subtle)];
+}
+
+.pill {
+  @apply inline-flex items-center rounded-full border border-white/5 bg-white/5 px-4 py-1 text-xs uppercase tracking-widest text-slate-300;
 }
 
 .h1 {
-  @apply text-3xl md:text-4xl font-bold;
+  @apply text-4xl font-semibold tracking-tight md:text-5xl;
 }
 
 .h2 {
-  @apply text-xl md:text-2xl font-semibold;
+  @apply text-2xl font-semibold tracking-tight;
 }
 
 .mono {
   @apply font-mono text-xs text-slate-300;
+}
+
+.glass-panel {
+  @apply rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_15px_45px_rgba(15,23,42,0.45)] backdrop-blur;
+}
+
+.nav-link {
+  @apply inline-flex items-center gap-2 rounded-full border border-transparent px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-white/10 hover:bg-white/5 hover:text-white;
 }

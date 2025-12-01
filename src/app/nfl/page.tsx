@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import useSWR from "swr";
+import { clampNflWeek, getCurrentNflWeek, nflSeasonYearForDate } from "@/lib/nfl";
 
 type Team = { id: number; name: string; logo?: string };
 type Game = {
@@ -15,19 +16,25 @@ type Game = {
   tv?: string[];
   gameUrl?: string;
 };
-type Payload = { data: Game[] };
+type Payload = { data: Game[]; week?: number; season?: number; note?: string };
 
 const fetcher = (u: string) => fetch(u, { cache: "no-store" }).then((r) => r.json());
 
 export default function NFLPage() {
-  // 🔢 Start on Week 11 for now
-  const [week, setWeek] = useState<number>(11);
+  const [week, setWeek] = useState<number>(() => clampNflWeek(getCurrentNflWeek(), 1, 18));
   const [seasonSel] = useState<"current" | "last">("current"); // hook for future toggle
+  const seasonBase = useMemo(() => nflSeasonYearForDate(), []);
+  const seasonYear =
+    seasonSel === "current" ? seasonBase : Math.max(2000, seasonBase - 1);
 
-  const key = useMemo(
-    () => `/api/nfl/scores?week=${week}&season=${seasonSel}&seasontype=2`,
-    [week, seasonSel]
-  );
+  const key = useMemo(() => {
+    const params = new URLSearchParams({
+      week: String(week),
+      season: String(seasonYear),
+      seasontype: "2",
+    });
+    return `/api/nfl/scores?${params.toString()}`;
+  }, [week, seasonYear]);
 
   const { data, error, isLoading } = useSWR<Payload>(key, fetcher, {
     refreshInterval: (latest) => {
@@ -49,42 +56,56 @@ export default function NFLPage() {
   );
   const fin = games.filter((g) => g.status === "FT");
 
+  const note = data?.note;
+  const statTiles = [
+    { label: "Matchups", value: games.length },
+    { label: "Live", value: live.length },
+    { label: "Final", value: fin.length },
+  ];
+
   return (
-    <main className="space-y-6">
-      {/* Header + week controls */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="h1">NFL Week {week}</h1>
-          <p className="text-sm text-slate-300">
-            Season: {seasonSel === "current" ? "Current" : "Last"} • Regular season
+    <div className="space-y-8">
+      <section className="card border-white/10 bg-gradient-to-br from-slate-900/90 via-slate-900/60 to-emerald-900/40">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.4em] text-slate-300">
+              Season {seasonYear} · Regular
+            </p>
+            <h1 className="mt-2 text-4xl font-semibold tracking-tight">NFL Week {week}</h1>
+            <p className="mt-3 max-w-2xl text-sm text-slate-300">
+              Real-time scoreboard and broadcast guide curated from ESPN&apos;s APIs. Use
+              the controls to skim each week of the regular season schedule.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button className="btn btn-ghost" onClick={() => setWeek((w) => Math.max(1, w - 1))}>
+              ◀ Prev Week
+            </button>
+            <button className="btn btn-primary" onClick={() => setWeek((w) => Math.min(18, w + 1))}>
+              Next Week ▶
+            </button>
+          </div>
+        </div>
+        <div className="mt-6 grid gap-4 sm:grid-cols-3">
+          {statTiles.map((tile) => (
+            <div key={tile.label} className="rounded-2xl border border-white/5 bg-white/5 p-4">
+              <p className="text-xs uppercase tracking-[0.4em] text-slate-400">
+                {tile.label}
+              </p>
+              <p className="mt-2 text-3xl font-semibold">{tile.value}</p>
+            </div>
+          ))}
+        </div>
+        {note && (
+          <p className="mt-4 text-xs uppercase tracking-[0.4em] text-amber-300/80">
+            {note}
           </p>
-        </div>
+        )}
+      </section>
 
-        <div className="flex items-center gap-2">
-          <button
-            className="btn"
-            onClick={() => setWeek((w) => Math.max(1, w - 1))}
-          >
-            ◀ Prev Week
-          </button>
-          <button
-            className="btn"
-            onClick={() => setWeek((w) => Math.min(25, w + 1))}
-          >
-            Next Week ▶
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="card text-sm text-red-300">
-          Failed to load NFL games.
-        </div>
-      )}
+      {error && <div className="card text-sm text-red-300">Failed to load NFL games.</div>}
       {isLoading && !data && (
-        <div className="card text-sm text-slate-300">
-          Loading Week {week} schedule…
-        </div>
+        <div className="card text-sm text-slate-300">Loading Week {week} schedule…</div>
       )}
 
       {!isLoading && !error && games.length === 0 && (
@@ -93,10 +114,12 @@ export default function NFLPage() {
         </div>
       )}
 
-      <Section title="Live" games={live} />
-      <Section title="Upcoming" games={up} />
-      <Section title="Final" games={fin} />
-    </main>
+      <div className="space-y-6">
+        <Section title="Live" games={live} />
+        <Section title="Upcoming" games={up} />
+        <Section title="Final" games={fin} />
+      </div>
+    </div>
   );
 }
 
@@ -105,14 +128,17 @@ export default function NFLPage() {
 function Section({ title, games }: { title: string; games: Game[] }) {
   if (!games.length) return null;
   return (
-    <section className="space-y-3">
-      <h2 className="h2">{title}</h2>
-      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+    <div className="glass-panel border-white/5 bg-white/5 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="h2">{title}</h2>
+        <span className="pill">{games.length} games</span>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {games.map((g) => (
           <Card key={g.id} g={g} />
         ))}
       </div>
-    </section>
+    </div>
   );
 }
 
